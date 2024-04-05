@@ -1,0 +1,33 @@
+---
+title: "Linear Project"
+author: "Caleb vonMaydell"
+date: "2024-04-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First, merge the data by household unique identifier (HH1,HH2)
+```{r cars}
+library(haven)
+ch <- read_sav("C:/Users/Caleb's PC/Downloads/State of Palestine MICS6 Datasets(2)/State of Palestine MICS6 SPSS Datasets/fs.sav")
+hh <- read_sav("C:/Users/Caleb's PC/Downloads/State of Palestine MICS6 Datasets(2)/State of Palestine MICS6 SPSS Datasets/hh.sav")
+
+merged_data<- merge(ch, hh, by = c("HH1", "HH2"))
+```
+
+```{r testing}
+#columns we want
+variables<-c("fsdisability", "HH6.x", "HH7.x", "HC0", "HW1", "HW3", "HW2","HC8", "WS1","WS3", "WS7", "WS11","helevel", "melevel", "windex5.y", "CB3", "CB7" , "CB11", "PR3", "FCD2F", "FCD2G", "FCD2I", "FCD2J", "FCD2K","FCF1","FCF2","FCF3", "HL4", "Refugee")
+
+
+selection<-merged_data[variables]
+
+View(selection)
+
+# Save data frame to CSV file on desktop
+write.csv(selection, file = "C:/Users/Caleb's PC/Desktop/my_data.csv", row.names = TRUE)
+```
+

@@ -7,27 +7,158 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 ```
 
 First, merge the data by household unique identifier (HH1,HH2)
 ```{r cars}
 library(haven)
-ch <- read_sav("C:/Users/Caleb's PC/Downloads/State of Palestine MICS6 Datasets(2)/State of Palestine MICS6 SPSS Datasets/fs.sav")
-hh <- read_sav("C:/Users/Caleb's PC/Downloads/State of Palestine MICS6 Datasets(2)/State of Palestine MICS6 SPSS Datasets/hh.sav")
+ch <- read_sav("C:\\Users\\Caleb\\Downloads\\State_of_Palestine_MICS6_Datasets\\State of Palestine MICS6 SPSS Datasets\\fs.sav")
+hh <- read_sav("C:\\Users\\Caleb\\Downloads\\State_of_Palestine_MICS6_Datasets\\State of Palestine MICS6 SPSS Datasets\\hh.sav")
 
 merged_data<- merge(ch, hh, by = c("HH1", "HH2"))
 ```
 
 ```{r testing}
 #columns we want
-variables<-c("fsdisability", "HH6.x", "HH7.x", "HC0", "HW1", "HW3", "HW2","HC8", "WS1","WS3", "WS7", "WS11","helevel", "melevel", "windex5.y", "CB3", "CB7" , "CB11", "PR3", "FCD2F", "FCD2G", "FCD2I", "FCD2J", "FCD2K","FCF1","FCF2","FCF3", "HL4", "Refugee")
-
+variables<-c("fsdisability", "HH6.x", "HH7.x", "HC0", "WS7","helevel", "melevel", "windex5.y", "CB3", "CB7" , "CB11","FCD2F", "FCD2G", "FCD2I", "FCD2J", "HL4", "Refugee")
 
 selection<-merged_data[variables]
 
-View(selection)
+# Change every 2 to 0 in selection$fsdisability
+selection$fsdisability[selection$fsdisability == 2] <- 0
 
-# Save data frame to CSV file on desktop
-write.csv(selection, file = "C:/Users/Caleb's PC/Desktop/my_data.csv", row.names = TRUE)
+# Remove selcted row with Na, most are small
+complete_rows <- !is.na(selection$melevel)
+selection <- selection[complete_rows,]
+
+#will remove age 15-17, thats ok
+complete_rows <- !is.na(selection$FCD2F)
+selection <- selection[complete_rows,]
+
+#removes any NA regressand
+complete_rows <- !is.na(selection$fsdisability)
+selection <- selection[complete_rows,]
+
+
+#remapping housing type to permanent vs non
+selection$HC0 <- ifelse(selection$HC0 %in% c(11,12,13), 1,
+                               ifelse(selection$HC0 %in% c(14,15,16,96), 0, NA))
+
+#remapping some 1/2 variables to 0/1
+selection$WS7[selection$WS7 == 2] <- 0
+selection$Refugee<- ifelse(selection$Refugee %in% c(3, 9), 0, selection$Refugee)
+
+selection$CB7 <- ifelse(selection$CB7 == 2 | is.na(selection$CB7), 0, selection$CB7)
+
+selection$CB11<- ifelse(selection$CB11 %in% c(2, 9), 0, selection$CB11)
+
+selection$FCD2F <- ifelse(selection$FCD2F == 2, 0,
+                                ifelse(selection$FCD2F == 9, 1, selection$FCD2F))
+selection$FCD2G <- ifelse(selection$FCD2G == 2, 0,
+                                ifelse(selection$FCD2G == 9, 1, selection$FCD2G))
+selection$FCD2I <- ifelse(selection$FCD2I == 2, 0,
+                                ifelse(selection$FCD2I == 9, 1, selection$FCD2I))
+selection$FCD2J <- ifelse(selection$FCD2J == 2, 0,
+                                ifelse(selection$FCD2J == 9, 1, selection$FCD2J))
+
+#transform the four variables by summing
+selection$physical_discipline <- rowSums(selection[, c("FCD2J", "FCD2I", "FCD2G", "FCD2F")], na.rm = TRUE)
+
+#remove the four precursors
+selection <- subset(selection, select = -c(FCD2J, FCD2I, FCD2G, FCD2F))
+
 ```
 
+
+Now we find to ordinary glm using the sigmoid link
+```{r ols}
+#splits the data
+set.seed(2)
+training.samples <- selection$fsdisability %>% createDataPartition(p = 0.9, list = FALSE)
+training.samples <- as.vector(training.samples)
+train.data <- selection[training.samples, ]
+test.data <- selection[-training.samples, ]
+
+library(caret)
+OLSfit<-glm(fsdisability~. , data = train.data , family = "binomial")
+probs <- predict(OLSfit,test.data, type = "response")
+pred.glm <- rep(0, length(probs))  #defaults to 0
+pred.glm[probs > 0.5] <- 1  #rounds values up
+#confusion matrix
+table(pred.glm, test.data$fsdisability)
+
+#misclassification error
+1-sum(diag(table(pred.glm, test.data$fsdisability)))/sum(table(pred.glm, test.data$fsdisability))  #diagonals are the correct values, sum the whole table for the sample accuracy
+x2<-as.matrix(test.data[,-1])
+y2<-as.matrix(test.data[,1])
+
+
+```
+As we can see, due to the scarcity of the 1's, the glm is a poor predictor, accurately predicting 0 of the disabled children.  
+
+```{r lasso}
+library(glmnet)
+
+x1<-as.matrix(train.data[,-1])
+y1<-as.matrix(train.data[,1])
+
+
+lasso_model<-cv.glmnet(x1,y1,alpha=1, family = "binomial")
+plot(lasso_model)
+
+
+
+#small lambda best
+
+
+
+plot(lasso_model$glmnet.fit)
+
+
+l.lasso.min <- lasso_model$lambda.min  #min is log(lamba ~ -6)
+lasso.model <- glmnet(x=x1, y=y1,
+                      alpha  = 1, 
+                      lambda = l.lasso.min, family = "binomial")
+
+
+lasso.model$beta  
+
+
+assess.glmnet(lasso.model, newx = x2, newy = y2 )  
+
+```
+```{r ridges}
+ridge_train<-cv.glmnet(x1,y1, alpha =0, family = "binomial", nlambda = 1e2)
+  
+plot(ridge_train)
+
+
+min_ridge <- ridge_train$lambda.min  #min is log(lamba ~ -6)
+
+ridge.model <- glmnet(x=x1,y=y1, 
+                      family = "binomial", 
+                      alpha=0, 
+                      lambda = min_ridge)
+
+
+ridge.model$beta  
+
+
+assess.glmnet(ridge.model, newx = x2, newy = y2 )  
+
+```
+
+last let us perform forward step wise regression.  
+```{r twirlingbaseball}
+library(MASS)
+
+
+base.model <- glm(fsdisability ~ 1, data = train.data, family = binomial)
+scope.model <- glm(fsdisability  ~ ., data = train.data, family = binomial)
+
+step.model <- stepAIC(base.model, direction = "forward", 
+                      scope = scope.model, trace = FALSE)
+
+summary(step.model)
+```
